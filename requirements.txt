@@ -1,0 +1,6 @@
+pandas
+numpy
+python-dotenv
+requests
+yfinance
+apscheduler
