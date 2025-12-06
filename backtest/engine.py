@@ -15,54 +15,78 @@ logger = logging.getLogger(__name__)
 
 
 class Backtester:
-    def __init__(self, strategy: Strategy, data_client: DataClient, initial_capital: float = 10000, db_path: str = "backtest.db"):
-        self.strategy = strategy
+    def __init__(self, strategies: List[Strategy], data_client: DataClient, initial_capital: float = 10000, db_path: str = "backtest.db"):
+        if not strategies:
+            raise ValueError("At least one strategy is required for backtesting")
+
+        self.strategies = strategies
         self.data_client = data_client
         self.initial_capital = initial_capital
         self.db_manager = DatabaseManager(db_path)
 
     def run(self, lookback_days: int = 730) -> Dict:
-        logger.info("Starting backtest for %s", self.strategy.symbol)
+        logger.info("Starting backtest for %s", ", ".join(strategy.symbol for strategy in self.strategies))
 
-        history_df = self.data_client.get_historical_bars(self.strategy.symbol, days=lookback_days)
-        min_bars = getattr(self.strategy, "min_history_bars", getattr(self.strategy, "ma_period", 0))
-        if history_df.empty or len(history_df) < min_bars:
-            logger.error("Insufficient historical data for backtest")
+        history_map: Dict[str, pd.DataFrame] = {}
+        active_strategies: Dict[str, Strategy] = {}
+        for strategy in self.strategies:
+            history_df = self.data_client.get_historical_bars(strategy.symbol, days=lookback_days)
+            min_bars = getattr(strategy, "min_history_bars", getattr(strategy, "ma_period", 0))
+            if history_df.empty or len(history_df) < min_bars:
+                logger.error("Insufficient historical data for %s", strategy.symbol)
+                continue
+
+            history_map[strategy.symbol] = history_df
+            active_strategies[strategy.symbol] = strategy
+
+        if not active_strategies:
+            logger.error("No strategies have enough historical data to run a backtest")
             return {}
 
         portfolio = PortfolioState(self.initial_capital, {}, self.initial_capital)
         execution_engine = SimulatedExecutionEngine(self.db_manager, slippage_pct=0.001)
         equity_curve = []
         trade_count = 0
+        latest_prices: Dict[str, float] = {}
 
-        start_index = min_bars if min_bars > 0 else 0
-        for i in range(start_index, len(history_df)):
-            window = history_df.iloc[: i + 1]
+        # Build a combined event stream sorted by timestamp so trades for different
+        # symbols share the same portfolio state progression.
+        events = []
+        for symbol, df in history_map.items():
+            for timestamp in df.index:
+                events.append((timestamp, symbol))
+        events.sort()
+
+        for timestamp, symbol in events:
+            strategy = active_strategies[symbol]
+            history_df = history_map[symbol]
+            window = history_df.loc[:timestamp]
+
+            min_bars = getattr(strategy, "min_history_bars", getattr(strategy, "ma_period", 0))
+            if len(window) < min_bars:
+                continue
+
             current_price = window["close"].iloc[-1]
+            latest_prices[symbol] = current_price
+            if symbol in portfolio.positions:
+                portfolio.positions[symbol].current_price = current_price
 
-            for pos in portfolio.positions.values():
-                pos.current_price = current_price
-
-            orders = self.strategy.on_bar(window, portfolio)
-
-            # Count how many trades we’re placing at this bar
+            orders = strategy.on_bar(window, portfolio)
             trade_count += len(orders)
 
             for order in orders:
-                trade_time = window.index[-1]
-                recent_prices = window[["close"]].tail(5)
-                print(
-                    f"\n[Backtest] {trade_time} -> {order.side.value.upper()} {order.quantity} {order.symbol} @ ${current_price:0.2f}")
-                print("Recent closes before trade:\n", recent_prices)
-                print("Strategy window snapshot (last 5 bars):\n", window.tail(5))
                 portfolio = execution_engine.execute_order(order, current_price, portfolio)
 
-            positions_value = sum(pos.market_value for pos in portfolio.positions.values())
+            positions_value = 0.0
+            for held_symbol, pos in portfolio.positions.items():
+                if held_symbol in latest_prices:
+                    pos.current_price = latest_prices[held_symbol]
+                positions_value += pos.market_value
             portfolio.equity = portfolio.cash + positions_value
 
             equity_curve.append(
                 {
-                    "timestamp": window.index[-1],
+                    "timestamp": timestamp,
                     "equity": portfolio.equity,
                     "cash": portfolio.cash,
                     "positions_value": positions_value,
@@ -105,4 +129,3 @@ class Backtester:
             "Total Trades": total_trades,
             "Completed Trades": total_trades // 2,
         }
-

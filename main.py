@@ -8,8 +8,9 @@ from config.settings import (
     INITIAL_CAPITAL,
     LIVE_LOOKBACK_DAYS,
     MODE,
-    SYMBOL,
-    TRADING_DB_PATH, MA_PERIOD,
+    SYMBOLS,
+    TRADING_DB_PATH,
+    MA_PERIOD,
 )
 from data.coinbase_client import CoinbaseDataClient
 from backtest.engine import Backtester
@@ -46,15 +47,25 @@ def build_live_execution_engine(db_manager: DatabaseManager) -> CoinbaseExecutio
     )
 
 
+def build_strategies():
+    """Instantiate one strategy per configured symbol."""
+    # Toggle between the strategy implementations here.
+    return [RSIBollingerMeanReversionStrategy(symbol=symbol) for symbol in SYMBOLS]
+    # return [TrendFollowingStrategy(symbol=symbol, ma_period=MA_PERIOD) for symbol in SYMBOLS]
+
+
 def main():
     setup_logging()
 
     print("\n" + "=" * 60)
     print(f"COINBASE RSI MEAN REVERSION BOT - {MODE.value.upper()} MODE")
     print("=" * 60 + "\n")
+    print(f"Active symbols: {', '.join(SYMBOLS)}")
 
-    strategy = RSIBollingerMeanReversionStrategy(symbol=SYMBOL)
-    # strategy = TrendFollowingStrategy(SYMBOL, ma_period=MA_PERIOD)
+    strategies = build_strategies()
+    if not strategies:
+        print("ERROR: No strategies configured")
+        return
 
     try:
         data_client = build_data_client()
@@ -63,7 +74,7 @@ def main():
         return
 
     if MODE == TradingMode.BACKTEST:
-        backtester = Backtester(strategy, data_client, INITIAL_CAPITAL, db_path=BACKTEST_DB_PATH)
+        backtester = Backtester(strategies, data_client, INITIAL_CAPITAL, db_path=BACKTEST_DB_PATH)
         backtester.run(lookback_days=HISTORICAL_LOOKBACK_DAYS)
         return
 
@@ -80,7 +91,7 @@ def main():
             return
 
     live_engine = LiveTradingEngine(
-        strategy=strategy,
+        strategies=strategies,
         data_client=data_client,
         execution_engine=execution_engine,
         mode=MODE,

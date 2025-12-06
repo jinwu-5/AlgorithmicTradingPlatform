@@ -7,13 +7,23 @@ from models.types import TradingMode
 
 load_dotenv()
 
-ALLOWED_SYMBOLS = {"BTC-USD", "ETH-USD"}
+ALLOWED_SYMBOLS = ["BTC-USD", "ETH-USD"]
 
 _symbol = (os.getenv("SYMBOL") or "BTC-USD").upper()
 if _symbol not in ALLOWED_SYMBOLS:
     _symbol = "BTC-USD"
 
-SYMBOL = _symbol
+_symbols_env = os.getenv("SYMBOLS")
+if _symbols_env:
+    _requested = [token.strip().upper() for token in _symbols_env.split(",") if token.strip()]
+else:
+    _requested = [_symbol]
+
+SYMBOLS = [sym for sym in _requested if sym in ALLOWED_SYMBOLS]
+if not SYMBOLS:
+    SYMBOLS = [_symbol]
+
+SYMBOL = SYMBOLS[0]
 INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", "10000"))
 MA_PERIOD = int(os.getenv("MA_PERIOD", "200"))
 
