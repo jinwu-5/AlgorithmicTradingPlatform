@@ -24,6 +24,7 @@ class CoinbaseDataClient(DataClient):
         300: "FIVE_MINUTE",
         900: "FIFTEEN_MINUTE",
         3600: "ONE_HOUR",
+        14400: "FOUR_HOUR",
         21600: "SIX_HOUR",
         86400: "ONE_DAY",
     }

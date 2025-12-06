@@ -39,7 +39,7 @@ COINBASE_API_SECRET = _secret.replace("\\n", "\n")
 COINBASE_API_HOST = os.getenv("COINBASE_API_HOST", "api.coinbase.com")
 
 _granularity = int(os.getenv("COINBASE_GRANULARITY", "3600"))
-_allowed_granularities = {60, 300, 900, 3600, 21600, 86400}
+_allowed_granularities = {60, 300, 900, 3600, 14400, 21600, 86400}
 if _granularity not in _allowed_granularities:
     _granularity = 3600
 COINBASE_GRANULARITY = _granularity

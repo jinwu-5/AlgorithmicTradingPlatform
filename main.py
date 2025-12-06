@@ -29,6 +29,7 @@ def build_data_client():
         raise RuntimeError("Coinbase credentials are required for data access")
 
     print("✓ Using Coinbase Advanced Trade market data")
+    print("COINBASE_GRANULARITY: ", COINBASE_GRANULARITY)
     return CoinbaseDataClient(
         granularity_seconds=COINBASE_GRANULARITY,
         api_key=COINBASE_API_KEY,
