@@ -6,3 +6,5 @@ apscheduler
 cdp-sdk
 PyJWT
 cryptography
+matplotlib
+mplfinance

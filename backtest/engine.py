@@ -1,6 +1,7 @@
 """Backtesting utilities."""
 from typing import Dict, List
 import logging
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,7 @@ from database.manager import DatabaseManager
 from execution.simulated import SimulatedExecutionEngine
 from models.types import PortfolioState
 from strategies.base import Strategy
+from visualization.plotting import plot_strategy_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ class Backtester:
         self.data_client = data_client
         self.initial_capital = initial_capital
         self.db_manager = DatabaseManager(db_path)
+        self.order_history: Dict[str, List[Dict]] = defaultdict(list)
 
     def run(self, lookback_days: int = 730) -> Dict:
         logger.info("Starting backtest for %s", ", ".join(strategy.symbol for strategy in self.strategies))
@@ -76,6 +79,14 @@ class Backtester:
 
             for order in orders:
                 portfolio = execution_engine.execute_order(order, current_price, portfolio)
+                self.order_history[order.symbol].append(
+                    {
+                        "timestamp": timestamp,
+                        "side": order.side,
+                        "price": current_price,
+                        "quantity": order.quantity,
+                    }
+                )
 
             positions_value = 0.0
             for held_symbol, pos in portfolio.positions.items():
@@ -100,6 +111,7 @@ class Backtester:
         for key, value in metrics.items():
             logger.info("%s: %s", key, value)
         logger.info("=" * 60)
+        self._generate_plots(active_strategies, history_map)
         return metrics
 
     def _calculate_metrics(self, equity_curve: List[Dict], total_trades: int) -> Dict:
@@ -129,3 +141,18 @@ class Backtester:
             "Total Trades": total_trades,
             "Completed Trades": total_trades // 2,
         }
+
+    def _generate_plots(self, active_strategies: Dict[str, Strategy], history_map: Dict[str, pd.DataFrame]) -> None:
+        for symbol, strategy in active_strategies.items():
+            history_df = history_map.get(symbol)
+            if history_df is None or history_df.empty:
+                continue
+
+            indicator_panels = strategy.build_indicator_panels(history_df)
+            orders = self.order_history.get(symbol, [])
+
+            try:
+                plot_strategy_diagnostics(symbol, history_df, orders, indicator_panels)
+                logger.info("Saved diagnostics chart for %s", symbol)
+            except Exception as exc:  # pragma: no cover - plotting is visual aid only
+                logger.error("Failed to build diagnostics chart for %s: %s", symbol, exc)

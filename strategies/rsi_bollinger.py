@@ -8,7 +8,7 @@ import logging
 import pandas as pd
 
 from models.types import Order, OrderSide, OrderType, PortfolioState
-from strategies.base import Strategy
+from strategies.base import IndicatorPanel, Strategy
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +37,12 @@ class RSIBollingerMeanReversionStrategy(Strategy):
         )
 
     def on_bar(self, history_df: pd.DataFrame, portfolio: PortfolioState) -> List[Order]:
-        if len(history_df) < self.min_history_bars:
-            logger.warning("Need %s bars, have %s", self.min_history_bars, len(history_df))
-            return []
-
-        df = history_df[["close"]].copy()
-        df["middle"] = df["close"].rolling(self.thresholds.bollinger_period).mean()
-        df["std"] = df["close"].rolling(self.thresholds.bollinger_period).std()
-        df["upper"] = df["middle"] + self.thresholds.bollinger_std * df["std"]
-        df["lower"] = df["middle"] - self.thresholds.bollinger_std * df["std"]
-        df["rsi"] = self._compute_rsi(df["close"], self.thresholds.rsi_period)
-
-        latest = df.iloc[-1]
-        if any(pd.isna(val) for val in latest[["middle", "upper", "lower", "rsi"]]):
+        df = self._build_indicator_frame(history_df)
+        if df.empty:
             logger.warning("Indicators not ready yet for %s", self.symbol)
             return []
 
+        latest = df.iloc[-1]
         current_price = latest["close"]
         position = portfolio.get_position(self.symbol)
         orders: List[Order] = []
@@ -105,5 +95,41 @@ class RSIBollingerMeanReversionStrategy(Strategy):
         rsi = 100 - (100 / (1 + rs))
 
         # Use bfill() instead of deprecated fillna(method="bfill")
-        return rsi.bfill()
+        return rsi.bfill().infer_objects(copy=False).astype(float)
 
+    def _build_indicator_frame(self, history_df: pd.DataFrame) -> pd.DataFrame:
+        if len(history_df) < self.min_history_bars:
+            return pd.DataFrame()
+
+        df = history_df[["open", "high", "low", "close", "volume"]].copy()
+        df["middle"] = df["close"].rolling(self.thresholds.bollinger_period).mean()
+        df["std"] = df["close"].rolling(self.thresholds.bollinger_period).std()
+        df["upper"] = df["middle"] + self.thresholds.bollinger_std * df["std"]
+        df["lower"] = df["middle"] - self.thresholds.bollinger_std * df["std"]
+        df["rsi"] = self._compute_rsi(df["close"], self.thresholds.rsi_period)
+        df = df.dropna()
+        return df
+
+    def build_indicator_panels(self, history_df: pd.DataFrame) -> List[IndicatorPanel]:
+        df = self._build_indicator_frame(history_df)
+        if df.empty:
+            return []
+
+        bollinger_df = df[["upper", "middle", "lower"]]
+        rsi_df = df[["rsi"]]
+        panels = [
+            IndicatorPanel(
+                title="Bollinger Bands",
+                data=bollinger_df,
+                overlay_on_price=True,
+            ),
+            IndicatorPanel(
+                title="RSI",
+                data=rsi_df,
+                horizontal_lines={
+                    "oversold": self.thresholds.oversold_rsi,
+                    "exit": self.thresholds.exit_rsi,
+                },
+            ),
+        ]
+        return panels
