@@ -21,20 +21,22 @@ class Backtester:
         self.initial_capital = initial_capital
         self.db_manager = DatabaseManager(db_path)
 
-    def run(self, lookback_days: int = 400) -> Dict:
+    def run(self, lookback_days: int = 730) -> Dict:
         logger.info("Starting backtest for %s", self.strategy.symbol)
 
         history_df = self.data_client.get_historical_bars(self.strategy.symbol, days=lookback_days)
-        ma_period = getattr(self.strategy, "ma_period", 0)
-        if history_df.empty or len(history_df) < ma_period:
+        min_bars = getattr(self.strategy, "min_history_bars", getattr(self.strategy, "ma_period", 0))
+        if history_df.empty or len(history_df) < min_bars:
             logger.error("Insufficient historical data for backtest")
             return {}
 
         portfolio = PortfolioState(self.initial_capital, {}, self.initial_capital)
         execution_engine = SimulatedExecutionEngine(self.db_manager, slippage_pct=0.001)
         equity_curve = []
+        trade_count = 0
 
-        for i in range(ma_period, len(history_df)):
+        start_index = min_bars if min_bars > 0 else 0
+        for i in range(start_index, len(history_df)):
             window = history_df.iloc[: i + 1]
             current_price = window["close"].iloc[-1]
 
@@ -42,7 +44,17 @@ class Backtester:
                 pos.current_price = current_price
 
             orders = self.strategy.on_bar(window, portfolio)
+
+            # Count how many trades we’re placing at this bar
+            trade_count += len(orders)
+
             for order in orders:
+                trade_time = window.index[-1]
+                recent_prices = window[["close"]].tail(5)
+                print(
+                    f"\n[Backtest] {trade_time} -> {order.side.value.upper()} {order.quantity} {order.symbol} @ ${current_price:0.2f}")
+                print("Recent closes before trade:\n", recent_prices)
+                print("Strategy window snapshot (last 5 bars):\n", window.tail(5))
                 portfolio = execution_engine.execute_order(order, current_price, portfolio)
 
             positions_value = sum(pos.market_value for pos in portfolio.positions.values())
@@ -57,7 +69,7 @@ class Backtester:
                 }
             )
 
-        metrics = self._calculate_metrics(equity_curve)
+        metrics = self._calculate_metrics(equity_curve, trade_count)
         logger.info("=" * 60)
         logger.info("BACKTEST RESULTS")
         logger.info("=" * 60)
@@ -66,7 +78,7 @@ class Backtester:
         logger.info("=" * 60)
         return metrics
 
-    def _calculate_metrics(self, equity_curve: List[Dict]) -> Dict:
+    def _calculate_metrics(self, equity_curve: List[Dict], total_trades: int) -> Dict:
         if not equity_curve:
             return {}
 
@@ -90,5 +102,7 @@ class Backtester:
             "Total Return": f"{total_return:.2f}%",
             "Max Drawdown": f"{max_drawdown:.2f}%",
             "Sharpe Ratio": f"{sharpe:.2f}",
-            "Total Trades": len(equity_curve),
+            "Total Trades": total_trades,
+            "Completed Trades": total_trades // 2,
         }
+

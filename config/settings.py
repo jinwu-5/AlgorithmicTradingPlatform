@@ -7,7 +7,13 @@ from models.types import TradingMode
 
 load_dotenv()
 
-SYMBOL = os.getenv("SYMBOL", "QQQ")
+ALLOWED_SYMBOLS = {"BTC-USD", "ETH-USD"}
+
+_symbol = (os.getenv("SYMBOL") or "BTC-USD").upper()
+if _symbol not in ALLOWED_SYMBOLS:
+    _symbol = "BTC-USD"
+
+SYMBOL = _symbol
 INITIAL_CAPITAL = float(os.getenv("INITIAL_CAPITAL", "10000"))
 MA_PERIOD = int(os.getenv("MA_PERIOD", "200"))
 
@@ -17,13 +23,19 @@ try:
 except ValueError:
     MODE = TradingMode.BACKTEST
 
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
-ALPACA_API_SECRET = os.getenv("ALPACA_API_SECRET")
+COINBASE_API_KEY = os.getenv("COINBASE_API_KEY")
+_secret = os.getenv("COINBASE_API_SECRET", "")
+COINBASE_API_SECRET = _secret.replace("\\n", "\n")
+COINBASE_API_HOST = os.getenv("COINBASE_API_HOST", "api.coinbase.com")
 
-HISTORICAL_LOOKBACK_DAYS = int(os.getenv("HISTORICAL_LOOKBACK_DAYS", "400"))
-LIVE_LOOKBACK_DAYS = int(os.getenv("LIVE_LOOKBACK_DAYS", "300"))
-LIVE_SCHEDULE_TIME = os.getenv("LIVE_SCHEDULE_TIME", "16:30")
-DATA_TIMEFRAME = os.getenv("DATA_TIMEFRAME", "1Day")
+_granularity = int(os.getenv("COINBASE_GRANULARITY", "3600"))
+_allowed_granularities = {60, 300, 900, 3600, 21600, 86400}
+if _granularity not in _allowed_granularities:
+    _granularity = 3600
+COINBASE_GRANULARITY = _granularity
+
+HISTORICAL_LOOKBACK_DAYS = int(os.getenv("HISTORICAL_LOOKBACK_DAYS", "730"))
+LIVE_LOOKBACK_DAYS = int(os.getenv("LIVE_LOOKBACK_DAYS", "120"))
 
 TRADING_DB_PATH = os.getenv("TRADING_DB_PATH", "trading_bot.db")
 BACKTEST_DB_PATH = os.getenv("BACKTEST_DB_PATH", "backtest.db")

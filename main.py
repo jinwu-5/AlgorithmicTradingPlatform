@@ -1,48 +1,66 @@
 """Entry point for the Algorithmic Trading Platform."""
 from config.settings import (
-    ALPACA_API_KEY,
-    ALPACA_API_SECRET,
     BACKTEST_DB_PATH,
-    DATA_TIMEFRAME,
+    COINBASE_API_KEY,
+    COINBASE_API_SECRET,
+    COINBASE_GRANULARITY,
     HISTORICAL_LOOKBACK_DAYS,
     INITIAL_CAPITAL,
     LIVE_LOOKBACK_DAYS,
-    MA_PERIOD,
     MODE,
     SYMBOL,
-    TRADING_DB_PATH,
+    TRADING_DB_PATH, MA_PERIOD,
 )
-from data.alpaca_client import AlpacaDataClient
-from data.yfinance_client import YFinanceDataClient
+from data.coinbase_client import CoinbaseDataClient
 from backtest.engine import Backtester
 from database.manager import DatabaseManager
-from execution.alpaca import AlpacaExecutionEngine
+from execution.coinbase import CoinbaseExecutionEngine
 from execution.simulated import SimulatedExecutionEngine
 from live.engine import LiveTradingEngine
 from models.types import TradingMode
+from strategies.rsi_bollinger import RSIBollingerMeanReversionStrategy
 from strategies.trend_following import TrendFollowingStrategy
 from utils.logger import setup_logging
 
 
 def build_data_client():
-    if ALPACA_API_KEY and ALPACA_API_SECRET:
-        print("✓ Using Alpaca for data")
-        return AlpacaDataClient(ALPACA_API_KEY, ALPACA_API_SECRET, paper=True, timeframe=DATA_TIMEFRAME)
+    if not (COINBASE_API_KEY and COINBASE_API_SECRET):
+        raise RuntimeError("Coinbase credentials are required for data access")
 
-    print("⚠ Alpaca credentials not found, using yfinance")
-    print("  (Install: pip install yfinance)")
-    return YFinanceDataClient()
+    print("✓ Using Coinbase Advanced Trade market data")
+    return CoinbaseDataClient(
+        granularity_seconds=COINBASE_GRANULARITY,
+        api_key=COINBASE_API_KEY,
+        api_secret=COINBASE_API_SECRET,
+    )
+
+
+def build_live_execution_engine(db_manager: DatabaseManager) -> CoinbaseExecutionEngine:
+    if not (COINBASE_API_KEY and COINBASE_API_SECRET):
+        raise RuntimeError("Coinbase credentials are required for LIVE mode")
+
+    return CoinbaseExecutionEngine(
+        api_key=COINBASE_API_KEY,
+        api_secret=COINBASE_API_SECRET,
+        db_manager=db_manager,
+    )
 
 
 def main():
     setup_logging()
 
     print("\n" + "=" * 60)
-    print(f"QQQ TREND-FOLLOWING BOT - {MODE.value.upper()} MODE")
+    print(f"COINBASE RSI MEAN REVERSION BOT - {MODE.value.upper()} MODE")
     print("=" * 60 + "\n")
 
-    strategy = TrendFollowingStrategy(SYMBOL, ma_period=MA_PERIOD)
-    data_client = build_data_client()
+    strategy = RSIBollingerMeanReversionStrategy(symbol=SYMBOL)
+    # strategy = TrendFollowingStrategy(SYMBOL, ma_period=MA_PERIOD)
+
+    try:
+        data_client = build_data_client()
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
+        return
 
     if MODE == TradingMode.BACKTEST:
         backtester = Backtester(strategy, data_client, INITIAL_CAPITAL, db_path=BACKTEST_DB_PATH)
@@ -55,10 +73,11 @@ def main():
     if MODE == TradingMode.PAPER:
         execution_engine = SimulatedExecutionEngine(db_manager)
     else:
-        if not (ALPACA_API_KEY and ALPACA_API_SECRET):
-            print("ERROR: Alpaca credentials required for LIVE mode")
+        try:
+            execution_engine = build_live_execution_engine(db_manager)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
             return
-        execution_engine = AlpacaExecutionEngine(ALPACA_API_KEY, ALPACA_API_SECRET, paper=False, db_manager=db_manager)
 
     live_engine = LiveTradingEngine(
         strategy=strategy,
@@ -70,10 +89,6 @@ def main():
     )
 
     live_engine.run_iteration(lookback_days=LIVE_LOOKBACK_DAYS)
-
-    # To enable scheduling instead of a single run:
-    # live_engine.start_scheduler(run_time=LIVE_SCHEDULE_TIME)
-
 
 if __name__ == "__main__":
     main()
