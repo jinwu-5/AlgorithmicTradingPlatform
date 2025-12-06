@@ -6,6 +6,7 @@ from typing import List
 import logging
 
 import pandas as pd
+import numpy as np
 
 from models.types import Order, OrderSide, OrderType, PortfolioState
 from strategies.base import IndicatorPanel, Strategy
@@ -81,21 +82,23 @@ class RSIBollingerMeanReversionStrategy(Strategy):
         quantity = allocation / price
         return round(quantity, 6)
 
+
     def _compute_rsi(self, prices: pd.Series, period: int) -> pd.Series:
         delta = prices.diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
 
-        avg_gain = gain.rolling(period).mean()
-        avg_loss = loss.rolling(period).mean()
+        # rolling means as float
+        avg_gain = gain.rolling(period, min_periods=period).mean()
+        avg_loss = loss.rolling(period, min_periods=period).mean()
 
-        # Avoid division by zero
-        rs = avg_gain / avg_loss.replace(0, pd.NA)
+        # Use np.nan instead of pd.NA to keep float dtype
+        rs = avg_gain / avg_loss.replace(0, np.nan)
 
         rsi = 100 - (100 / (1 + rs))
 
-        # Use bfill() instead of deprecated fillna(method="bfill")
-        return rsi.bfill().infer_objects(copy=False).astype(float)
+        # rsi is already float; bfill won't give the FutureWarning
+        return rsi.bfill()
 
     def _build_indicator_frame(self, history_df: pd.DataFrame) -> pd.DataFrame:
         if len(history_df) < self.min_history_bars:
